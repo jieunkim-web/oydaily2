@@ -228,7 +228,7 @@ tr:hover td{background:rgba(108,142,240,0.04);}
   <button class="main-tab" onclick="switchPage('channel',this)">📡 지면별 분석</button>
   <button class="main-tab" onclick="switchPage('product',this)">🧴 제품별 분석</button>
   <button class="main-tab" onclick="switchPage('contribution',this)">💰 기여도·수익성</button>
-  <button class="main-tab" onclick="switchPage('goals',this)">🎯 목표 관리</button>
+
 </div>
 
 <!-- ── 필터바 ── -->
@@ -381,6 +381,29 @@ tr:hover td{background:rgba(108,142,240,0.04);}
         <tbody id="channel-summary-tbody">
           <tr><td colspan="8"><div class="empty"><div class="ei">📊</div><p>데이터를 불러오면 표시됩니다</p></div></td></tr>
         </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 매체별 심화 지표 -->
+  <div class="tbl-card" style="margin-bottom:16px">
+    <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+      <span style="font-size:12px;font-weight:600">📊 매체별 심화 지표</span>
+      <span style="font-size:10px;color:var(--text3)">목표달성 관리 지표</span>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr>
+          <th>매체</th>
+          <th>광고비</th><th>기여매출</th><th>ROAS</th>
+          <th>구매수</th><th>CPA</th>
+          <th>노출</th><th>CTR</th><th>CVR</th>
+          <th>CPM</th>
+          <th>OY매출 기여율</th>
+          <th>광고비/기여매출</th>
+          <th>BEP 대비</th>
+        </tr></thead>
+        <tbody id="advanced-metrics-tbody"></tbody>
       </table>
     </div>
   </div>
@@ -1102,10 +1125,13 @@ function updateDateLbl() {
 function filterRows(rows, dateKey) {
   dateKey = dateKey || '_date';
   return rows.filter(r => {
-    const d = r[dateKey] || normalizeDate(r.partition_date||r.date||'');
-    if (!d || d < filterFrom || d > filterTo) return false;
+    const d = r[dateKey] || r['_date'] || '';
+    // filterFrom/To 있을 때만 날짜 필터 적용
+    if (filterFrom && filterTo) {
+      if (!d || d < filterFrom || d > filterTo) return false;
+    }
     if (selectedProd !== 'all') {
-      const p = r.product_name || r._prod || r.제품명 || r.product || '';
+      const p = r._prod || r.product_name || r['제품명'] || r.product || '';
       if (p && p !== selectedProd) return false;
     }
     return true;
@@ -1131,10 +1157,15 @@ function chStats(key) {
   const ch = CHANNELS.find(c => c.key === key);
   if (!ch) return { spend:0, val:0, conv:0, impr:0, clicks:0 };
   const rows = filterRows(allData[key]);
+  // 컬럼값 가져오기: 원본키 → lowercase → 공통 폴백 순
+  const getCol = (r, col) => {
+    const v = r[col] ?? r[col.toLowerCase()] ?? r[col.toUpperCase()];
+    return v !== undefined && v !== null && v !== '' ? v : null;
+  };
   return {
-    spend:  rows.reduce((s,r) => s + cleanNum(r[ch.spendCol]||r[ch.spendCol.toLowerCase()]||r.spend||0), 0),
-    val:    rows.reduce((s,r) => s + cleanNum(r[ch.valCol]||r[ch.valCol.toLowerCase()]||r.purchase_value||0), 0),
-    conv:   rows.reduce((s,r) => s + cleanNum(r[ch.convCol]||r[ch.convCol.toLowerCase()]||r.purchases||0), 0),
+    spend:  rows.reduce((s,r) => s + cleanNum(getCol(r,ch.spendCol) ?? r.spend ?? 0), 0),
+    val:    rows.reduce((s,r) => s + cleanNum(getCol(r,ch.valCol)   ?? r.purchase_value ?? r.value ?? 0), 0),
+    conv:   rows.reduce((s,r) => s + cleanNum(getCol(r,ch.convCol)  ?? r.purchases ?? r.conversion ?? 0), 0),
     impr:   rows.reduce((s,r) => s + cleanNum(r.impressions||r.impression||r.노출||0), 0),
     clicks: rows.reduce((s,r) => s + cleanNum(r.outbound_clicks||r.clicks||r.click||r.클릭||0), 0),
   };
@@ -1195,6 +1226,64 @@ function renderContribBar(stats, oyRev) {
     const pct=total>0?(s.val/total*100).toFixed(1):0;
     return `<div class="cl-item"><div class="cl-dot" style="background:${s.hex}"></div>${escHtml(s.name)} <strong>${pct}%</strong> (${fmtWon(s.val)})</div>`;
   }).join('');
+}
+
+
+// ── 매체별 심화 지표 렌더
+function renderAdvancedMetrics(stats, oyRev) {
+  const tbody = document.getElementById('advanced-metrics-tbody');
+  if (!tbody) return;
+  const active = stats.filter(c => c.spend > 0 || c.val > 0).sort((a,b) => b.spend-a.spend);
+  if (!active.length) { tbody.innerHTML='<tr><td colspan="13" class="empty" style="padding:20px;text-align:center;color:var(--text3)">데이터 로드 후 표시됩니다</td></tr>'; return; }
+
+  const totalSpend = active.reduce((s,c)=>s+c.spend,0);
+  const totalVal   = active.reduce((s,c)=>s+c.val,0);
+  const totalConv  = active.reduce((s,c)=>s+c.conv,0);
+  const totalImpr  = active.reduce((s,c)=>s+c.impr,0);
+  const totalClicks= active.reduce((s,c)=>s+c.clicks,0);
+
+  tbody.innerHTML = active.map(c => {
+    const roas   = c.spend>0 ? c.val/c.spend : 0;
+    const cpa    = c.conv>0  ? c.spend/c.conv : 0;
+    const ctr    = c.impr>0  ? c.clicks/c.impr*100 : 0;
+    const cvr    = c.clicks>0? c.conv/c.clicks*100 : 0;
+    const cpm    = c.impr>0  ? c.spend/c.impr*1000 : 0;
+    const contribPct = oyRev>0 ? c.val/oyRev*100 : 0;
+    const spendOnVal = c.val>0 ? c.spend/c.val*100 : 0;  // 광고비/기여매출 = 1/ROAS
+    const bepGap = roas - BEP_ROAS; // BEP 대비 초과/미달
+    const roasC  = roas>=BEP_ROAS?'var(--good)':roas>=1?'var(--warn)':'var(--bad)';
+    const bepC   = bepGap>=0?'var(--good)':'var(--bad)';
+
+    return `<tr>
+      <td><span class="ch-chip" style="background:${c.hex}">${escHtml(c.name)}</span></td>
+      <td>${fmtWon(c.spend)}</td>
+      <td style="color:var(--c-oy);font-weight:600">${fmtWon(c.val)}</td>
+      <td style="font-weight:700;color:${roasC}">${roas>0?roas.toFixed(2)+'x':'—'}</td>
+      <td>${fmtNum(c.conv)}</td>
+      <td>${cpa>0?fmtWon(cpa):'—'}</td>
+      <td>${c.impr>0?fmtNum(c.impr):'—'}</td>
+      <td>${ctr>0?ctr.toFixed(2)+'%':'—'}</td>
+      <td>${cvr>0?cvr.toFixed(2)+'%':'—'}</td>
+      <td>${cpm>0?fmtWon(cpm):'—'}</td>
+      <td>${contribPct>0?contribPct.toFixed(1)+'%':'—'}</td>
+      <td>${spendOnVal>0?spendOnVal.toFixed(1)+'%':'—'}</td>
+      <td style="color:${bepC};font-weight:600">${bepGap>=0?'+':''}${bepGap.toFixed(2)}x</td>
+    </tr>`;
+  }).join('') + `<tr style="background:var(--bg3);font-weight:700;border-top:2px solid var(--border)">
+    <td>합계</td>
+    <td>${fmtWon(totalSpend)}</td>
+    <td style="color:var(--c-oy)">${fmtWon(totalVal)}</td>
+    <td style="color:${totalSpend>0&&totalVal/totalSpend>=BEP_ROAS?'var(--good)':'var(--warn)'}">${totalSpend>0?(totalVal/totalSpend).toFixed(2)+'x':'—'}</td>
+    <td>${fmtNum(totalConv)}</td>
+    <td>${totalConv>0?fmtWon(totalSpend/totalConv):'—'}</td>
+    <td>${totalImpr>0?fmtNum(totalImpr):'—'}</td>
+    <td>${totalImpr>0?(totalClicks/totalImpr*100).toFixed(2)+'%':'—'}</td>
+    <td>${totalClicks>0?(totalConv/totalClicks*100).toFixed(2)+'%':'—'}</td>
+    <td>${totalImpr>0?fmtWon(totalSpend/totalImpr*1000):'—'}</td>
+    <td>${oyRev>0?(totalVal/oyRev*100).toFixed(1)+'%':'—'}</td>
+    <td>${totalVal>0?(totalSpend/totalVal*100).toFixed(1)+'%':'—'}</td>
+    <td>—</td>
+  </tr>`;
 }
 
 function renderOverview() {
@@ -1258,6 +1347,9 @@ function renderOverview() {
 
   // 기여도 바
   renderContribBar(stats, oyRev);
+
+  // 심화 지표
+  renderAdvancedMetrics(stats, oyRev);
 
   // 차트
   renderTrendChart();
@@ -1614,6 +1706,13 @@ function toggleAllChannels() {
 }
 function renderChannelPage() {
   const selChs = CHANNELS.filter(c => selectedChannels.has(c.key));
+  // 데이터가 있는 채널만 확인
+  const hasData = CHANNELS.some(c => allData[c.key].length > 0);
+  if (!hasData) {
+    document.getElementById('ch-detail-tbody').innerHTML =
+      '<tr><td colspan="12"><div class="empty"><div class="ei">📡</div><p>먼저 데이터를 불러와주세요</p></div></td></tr>';
+    return;
+  }
 
   // ── KPI 합산
   let totalSpend=0,totalVal=0,totalConv=0,totalImpr=0,totalClicks=0;
